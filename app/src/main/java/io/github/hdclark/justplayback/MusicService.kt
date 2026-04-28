@@ -176,7 +176,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             shouldResumeOnFocusGain = false
             if (isPlayerPrepared && requestAudioFocus()) {
                 mp.start()
-                wakeLock?.acquire()
+                acquireWakeLockIfNeeded()
             }
         }
         updateNotification()
@@ -208,7 +208,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             setOnPreparedListener { mp ->
                 isPlayerPrepared = true
                 mp.start()
-                wakeLock?.acquire()
+                acquireWakeLockIfNeeded()
                 updatePlaybackState()
                 updateNotification()
             }
@@ -290,7 +290,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                 mediaPlayer?.setVolume(1.0f, 1.0f)
                 if (shouldResumeOnFocusGain && isPlayerPrepared && mediaPlayer?.isPlaying != true) {
                     mediaPlayer?.start()
-                    wakeLock?.acquire()
+                    acquireWakeLockIfNeeded()
                 }
                 shouldResumeOnFocusGain = false
                 updateNotification()
@@ -425,6 +425,14 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         val lock = wakeLock
         if (lock?.isHeld == true) {
             lock.release()
+        }
+    }
+
+    @Suppress("WakelockTimeout")
+    private fun acquireWakeLockIfNeeded() {
+        val lock = wakeLock
+        if (lock?.isHeld != true) {
+            lock?.acquire()
         }
     }
 
