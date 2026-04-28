@@ -7,8 +7,9 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import java.text.CharacterIterator
 import java.text.StringCharacterIterator
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class MusicAdapter(
@@ -16,7 +17,7 @@ class MusicAdapter(
     private val onClick: (MusicFile) -> Unit
 ) : RecyclerView.Adapter<MusicAdapter.ViewHolder>() {
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.getDefault())
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val name: TextView = view.findViewById(R.id.tv_name)
@@ -38,7 +39,9 @@ class MusicAdapter(
         val file = files[position]
         holder.name.text = file.name
         val sizeStr = formatSize(file.size)
-        val dateStr = dateFormat.format(Date(file.lastModified * 1000L))
+        val dateStr = Instant.ofEpochSecond(file.lastModified)
+            .atZone(ZoneId.systemDefault())
+            .format(dateFormatter)
         holder.meta.text = "$sizeStr • $dateStr"
         holder.itemView.setOnClickListener { onClick(file) }
     }

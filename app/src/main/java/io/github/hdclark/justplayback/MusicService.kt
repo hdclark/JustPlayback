@@ -430,9 +430,10 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     @Suppress("WakelockTimeout")
     private fun acquireWakeLockIfNeeded() {
-        val lock = wakeLock
-        if (lock?.isHeld != true) {
-            lock?.acquire()
+        val lock = wakeLock ?: return
+        if (!lock.isHeld) {
+            // Foreground playback should keep the CPU awake until playback pauses or stops.
+            lock.acquire()
         }
     }
 
