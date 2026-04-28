@@ -16,9 +16,13 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.google.android.material.appbar.AppBarLayout
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -78,13 +82,36 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Enable edge-to-edge so content draws behind system bars
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         setSupportActionBar(findViewById(R.id.toolbar))
 
         recyclerView = findViewById(R.id.recycler_view)
         swipeRefresh = findViewById(R.id.swipe_refresh)
 
+        // Apply status-bar inset to the AppBarLayout
+        val appBarLayout = findViewById<AppBarLayout>(R.id.app_bar_layout)
+        ViewCompat.setOnApplyWindowInsetsListener(appBarLayout) { view, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            view.setPadding(view.paddingLeft, statusBars.top, view.paddingRight, view.paddingBottom)
+            insets
+        }
+
+        // Apply navigation-bar inset to the RecyclerView bottom padding
+        val initialBottomPad = (8 * resources.displayMetrics.density + 0.5f).toInt()
+        ViewCompat.setOnApplyWindowInsetsListener(recyclerView) { view, insets ->
+            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight,
+                initialBottomPad + navBars.bottom)
+            insets
+        }
+
         adapter = MusicAdapter(emptyList()) { file ->
             val allFiles = Prefs.loadFiles(this)
+            // Always ensure the service is properly *started* (not just bound) so it
+            // survives the activity unbinding when the screen turns off.
+            ensureServiceStarted()
             if (bound && musicService != null) {
                 musicService?.play(file, allFiles)
             } else {
@@ -92,7 +119,6 @@ class MainActivity : AppCompatActivity() {
                 // The main serviceConnection (onStart) will call play once connected.
                 pendingFile = file
                 pendingAllFiles = allFiles
-                ensureServiceStarted()
             }
         }
 
