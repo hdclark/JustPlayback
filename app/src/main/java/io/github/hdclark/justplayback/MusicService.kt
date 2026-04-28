@@ -112,16 +112,17 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     override fun onBind(intent: Intent): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Ensure startForeground is called quickly to satisfy foreground service requirements
-        if (current == null) {
-            val notification = Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle(getString(R.string.app_name))
-                .setContentText("")
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .setOngoing(true)
-                .build()
-            startForegroundCompat(notification)
-        }
+        // Always call startForeground to satisfy the foreground service 5-second requirement
+        // whenever onStartCommand is invoked via startForegroundService().
+        val notification = current?.let { file ->
+            buildPlaybackNotification(file)
+        } ?: Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText("")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .setOngoing(true)
+            .build()
+        startForegroundCompat(notification)
         return START_STICKY
     }
 
@@ -325,6 +326,10 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private fun updateNotification() {
         val file = current ?: return
+        startForegroundCompat(buildPlaybackNotification(file))
+    }
+
+    private fun buildPlaybackNotification(file: MusicFile): Notification {
         val isPlaying = mediaPlayer?.isPlaying == true
         val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause
                             else android.R.drawable.ic_media_play
@@ -335,7 +340,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = Notification.Builder(this, CHANNEL_ID)
+        return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(file.name)
             .setContentText(formatNotificationMeta(file))
             .setSmallIcon(android.R.drawable.ic_media_play)
@@ -383,8 +388,6 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                     .setShowActionsInCompactView(1, 2, 3)
             )
             .build()
-
-        startForegroundCompat(notification)
     }
 
     @Suppress("DEPRECATION")
