@@ -222,16 +222,22 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         stopSelf()
     }
 
-    private fun requestAudioFocus(): Boolean {
+    private fun getOrCreateAudioFocusRequest(): AudioFocusRequest {
+        focusRequest?.let { return it }
+
         val attrs = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+        return AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attrs)
             .setOnAudioFocusChangeListener(this)
             .build()
-        focusRequest = request
+            .also { focusRequest = it }
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        val request = getOrCreateAudioFocusRequest()
         val result = audioManager.requestAudioFocus(request)
         return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     }
