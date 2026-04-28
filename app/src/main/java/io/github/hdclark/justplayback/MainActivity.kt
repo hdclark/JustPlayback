@@ -27,6 +27,11 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        /** Bottom padding for the file list, in dp, to give breathing room at the end of the list. */
+        private const val LIST_BOTTOM_PADDING_DP = 8
+    }
+
     private lateinit var recyclerView: RecyclerView
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var adapter: MusicAdapter
@@ -99,7 +104,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Apply navigation-bar inset to the RecyclerView bottom padding
-        val initialBottomPad = (8 * resources.displayMetrics.density + 0.5f).toInt()
+        val initialBottomPad = (LIST_BOTTOM_PADDING_DP * resources.displayMetrics.density + 0.5f).toInt()
         ViewCompat.setOnApplyWindowInsetsListener(recyclerView) { view, insets ->
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             view.setPadding(view.paddingLeft, view.paddingTop, view.paddingRight,
