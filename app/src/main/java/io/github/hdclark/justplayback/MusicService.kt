@@ -155,7 +155,11 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     fun seekRelative(ms: Int) {
         mediaPlayer?.let { mp ->
-            val pos = (mp.currentPosition + ms).coerceIn(0, mp.duration)
+            val duration = mp.duration
+            if (duration <= 0) {
+                return
+            }
+            val pos = (mp.currentPosition + ms).coerceIn(0, duration)
             mp.seekTo(pos)
         }
     }
