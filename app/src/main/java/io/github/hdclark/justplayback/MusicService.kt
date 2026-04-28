@@ -308,7 +308,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             .setContentText(formatNotificationMeta(file))
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(mainIntent)
-            .setOngoing(isPlaying)
+            .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .addAction(
                 Notification.Action.Builder(
