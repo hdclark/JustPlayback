@@ -17,7 +17,7 @@ class MusicAdapter(
     private val onClick: (MusicFile) -> Unit
 ) : RecyclerView.Adapter<MusicAdapter.ViewHolder>() {
 
-    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.getDefault())
+    private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val name: TextView = view.findViewById(R.id.tv_name)

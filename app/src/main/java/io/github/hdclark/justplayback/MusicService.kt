@@ -227,7 +227,11 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private fun stopPlayback() {
         if (isPlayerPrepared) {
-            runCatching { mediaPlayer?.stop() }
+            try {
+                mediaPlayer?.stop()
+            } catch (_: IllegalStateException) {
+                // The player may still be preparing or transitioning into an error state.
+            }
         }
         mediaPlayer?.release()
         mediaPlayer = null
