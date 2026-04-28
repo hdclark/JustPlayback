@@ -193,14 +193,20 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
                     .build()
             )
             setDataSource(this@MusicService, Uri.parse(file.uri))
-            prepare()
-            start()
+            setOnPreparedListener { mp ->
+                mp.start()
+                wakeLock?.acquire()
+                updatePlaybackState()
+                updateNotification()
+            }
+            setOnErrorListener { _, _, _ ->
+                playNext()
+                true
+            }
             setOnCompletionListener { playNext() }
+            prepareAsync()
         }
 
-        wakeLock?.acquire()
-
-        updatePlaybackState()
         updateNotification()
     }
 

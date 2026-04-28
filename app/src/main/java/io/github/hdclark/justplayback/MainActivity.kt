@@ -50,14 +50,26 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* Result is informational; service will handle gracefully without it */ }
+
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val granted = permissions.values.any { it }
-        if (granted) {
+        val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        val storageGranted = permissions[storagePermission] ?: (
+            ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED
+        )
+        if (storageGranted) {
             refreshFromMediaStore()
         } else {
             Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
+            swipeRefresh.isRefreshing = false
         }
     }
 
@@ -92,6 +104,14 @@ class MainActivity : AppCompatActivity() {
 
         // Load from prefs on startup (no MediaStore query)
         loadAndDisplayFromPrefs()
+
+        // Ask for notification permission early so the foreground service can show controls
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     override fun onStart() {
@@ -139,20 +159,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionsAndRefresh() {
-        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.READ_MEDIA_AUDIO)
+        val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
         } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+            Manifest.permission.READ_EXTERNAL_STORAGE
         }
-
-        val allGranted = permissions.all {
-            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
-        }
-
-        if (allGranted) {
+        if (ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED) {
             refreshFromMediaStore()
         } else {
-            permissionLauncher.launch(permissions)
+            permissionLauncher.launch(arrayOf(storagePermission))
         }
     }
 
