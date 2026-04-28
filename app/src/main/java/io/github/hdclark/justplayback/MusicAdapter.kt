@@ -16,9 +16,16 @@ class MusicAdapter(
     private val onClick: (MusicFile) -> Unit
 ) : RecyclerView.Adapter<MusicAdapter.ViewHolder>() {
 
+    private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val name: TextView = view.findViewById(R.id.tv_name)
         val meta: TextView = view.findViewById(R.id.tv_meta)
+
+        init {
+            name.isSelected = true
+            meta.isSelected = true
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -31,8 +38,7 @@ class MusicAdapter(
         val file = files[position]
         holder.name.text = file.name
         val sizeStr = formatSize(file.size)
-        val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-            .format(Date(file.lastModified * 1000L))
+        val dateStr = dateFormat.format(Date(file.lastModified * 1000L))
         holder.meta.text = "$sizeStr • $dateStr"
         holder.itemView.setOnClickListener { onClick(file) }
     }

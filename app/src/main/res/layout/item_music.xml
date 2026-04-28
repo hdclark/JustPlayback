@@ -15,7 +15,6 @@
         android:focusableInTouchMode="true"
         android:marqueeRepeatLimit="-1"
         android:scrollHorizontally="true"
-        android:selected="true"
         android:singleLine="true"
         android:textStyle="bold"
         android:textSize="15sp" />
@@ -30,7 +29,6 @@
         android:focusableInTouchMode="true"
         android:marqueeRepeatLimit="-1"
         android:scrollHorizontally="true"
-        android:selected="true"
         android:singleLine="true"
         android:textSize="12sp"
         android:alpha="0.7" />

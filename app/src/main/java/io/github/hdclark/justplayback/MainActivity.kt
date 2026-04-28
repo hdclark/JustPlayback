@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
@@ -153,7 +154,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sortFiles(files: List<MusicFile>, order: Int): List<MusicFile> = when (order) {
-        Prefs.SORT_ALPHA -> files.sortedBy { it.name.lowercase() }
+        Prefs.SORT_ALPHA -> files.sortedBy { it.name.lowercase(Locale.ROOT) }
         Prefs.SORT_SIZE -> files.sortedByDescending { it.size }
         else -> files.sortedByDescending { it.lastModified }
     }
@@ -176,13 +177,15 @@ class MainActivity : AppCompatActivity() {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.MIME_TYPE,
             MediaStore.Audio.Media.SIZE,
             MediaStore.Audio.Media.DATE_MODIFIED,
         )
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} = 1"
+        val selection = "${MediaStore.Audio.Media.IS_MUSIC} = ? AND ${MediaStore.Audio.Media.MIME_TYPE} LIKE ?"
+        val selectionArgs = arrayOf("1", "audio/%")
         val files = mutableListOf<MusicFile>()
 
-        contentResolver.query(uri, projection, selection, null, null)?.use { cursor ->
+        contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
             val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
@@ -190,11 +193,15 @@ class MainActivity : AppCompatActivity() {
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
+                val name = cursor.getString(nameCol)?.trim().orEmpty()
+                if (name.isEmpty()) {
+                    continue
+                }
                 val fileUri = android.content.ContentUris.withAppendedId(uri, id).toString()
                 files.add(
                     MusicFile(
                         id = id,
-                        name = cursor.getString(nameCol) ?: "",
+                        name = name,
                         uri = fileUri,
                         size = cursor.getLong(sizeCol),
                         lastModified = cursor.getLong(modCol)

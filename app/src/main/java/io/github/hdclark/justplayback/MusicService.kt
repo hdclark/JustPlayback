@@ -45,6 +45,8 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     private var focusRequest: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var notificationManager: NotificationManager? = null
+    private var isPlayerPrepared = false
+    private var shouldResumeOnFocusGain = false
 
     var files: List<MusicFile> = emptyList()
         private set
@@ -167,10 +169,14 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     fun pauseResume() {
         val mp = mediaPlayer ?: return
         if (mp.isPlaying) {
+            shouldResumeOnFocusGain = false
             mp.pause()
+            releaseWakeLockIfHeld()
         } else {
-            if (requestAudioFocus()) {
+            shouldResumeOnFocusGain = false
+            if (isPlayerPrepared && requestAudioFocus()) {
                 mp.start()
+                wakeLock?.acquire()
             }
         }
         updateNotification()
@@ -189,6 +195,8 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
         mediaPlayer?.reset()
         mediaPlayer?.release()
+        isPlayerPrepared = false
+        shouldResumeOnFocusGain = false
         mediaPlayer = MediaPlayer().apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -198,12 +206,15 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             )
             setDataSource(this@MusicService, Uri.parse(file.uri))
             setOnPreparedListener { mp ->
+                isPlayerPrepared = true
                 mp.start()
                 wakeLock?.acquire()
                 updatePlaybackState()
                 updateNotification()
             }
             setOnErrorListener { _, _, _ ->
+                isPlayerPrepared = false
+                releaseWakeLockIfHeld()
                 playNext()
                 true
             }
@@ -215,11 +226,15 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     private fun stopPlayback() {
-        mediaPlayer?.stop()
+        if (isPlayerPrepared) {
+            runCatching { mediaPlayer?.stop() }
+        }
         mediaPlayer?.release()
         mediaPlayer = null
+        isPlayerPrepared = false
+        shouldResumeOnFocusGain = false
         current = null
-        wakeLock?.release()
+        releaseWakeLockIfHeld()
         abandonAudioFocus()
         updatePlaybackState()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -254,21 +269,30 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
     override fun onAudioFocusChange(focusChange: Int) {
         when (focusChange) {
             AudioManager.AUDIOFOCUS_LOSS -> {
+                shouldResumeOnFocusGain = false
                 mediaPlayer?.pause()
+                releaseWakeLockIfHeld()
                 updateNotification()
                 updatePlaybackState()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                shouldResumeOnFocusGain = mediaPlayer?.isPlaying == true
                 mediaPlayer?.pause()
+                releaseWakeLockIfHeld()
                 updateNotification()
                 updatePlaybackState()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                shouldResumeOnFocusGain = mediaPlayer?.isPlaying == true
                 mediaPlayer?.setVolume(0.3f, 0.3f)
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 mediaPlayer?.setVolume(1.0f, 1.0f)
-                mediaPlayer?.start()
+                if (shouldResumeOnFocusGain && isPlayerPrepared && mediaPlayer?.isPlaying != true) {
+                    mediaPlayer?.start()
+                    wakeLock?.acquire()
+                }
+                shouldResumeOnFocusGain = false
                 updateNotification()
                 updatePlaybackState()
             }
