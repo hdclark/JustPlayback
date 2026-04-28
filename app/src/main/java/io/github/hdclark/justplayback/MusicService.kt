@@ -397,13 +397,20 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         return if (kb >= 1024) "%.1f MB".format(kb / 1024.0) else "$kb KB"
     }
 
+    private fun releaseWakeLockIfHeld() {
+        val lock = wakeLock
+        if (lock?.isHeld == true) {
+            lock.release()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(actionReceiver)
         mediaPlayer?.release()
         mediaPlayer = null
         mediaSession.release()
-        wakeLock?.release()
+        releaseWakeLockIfHeld()
         abandonAudioFocus()
     }
 }
