@@ -179,6 +179,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     fun getDuration(): Int = mediaPlayer?.duration ?: 0
 
+    @Suppress("WakelockTimeout")
     private fun startPlayback(file: MusicFile) {
         if (!requestAudioFocus()) return
 
@@ -197,7 +198,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
             setOnCompletionListener { playNext() }
         }
 
-        wakeLock?.acquire(10 * 60 * 60 * 1000L)
+        wakeLock?.acquire()
 
         updatePlaybackState()
         updateNotification()

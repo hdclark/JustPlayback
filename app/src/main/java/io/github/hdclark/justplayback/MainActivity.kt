@@ -28,12 +28,20 @@ class MainActivity : AppCompatActivity() {
 
     private var musicService: MusicService? = null
     private var bound = false
+    private var pendingFile: MusicFile? = null
+    private var pendingAllFiles: List<MusicFile> = emptyList()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
             val binder = service as MusicService.MusicBinder
             musicService = binder.getService()
             bound = true
+            // Play any file that was tapped before the service was ready
+            pendingFile?.let { file ->
+                musicService?.play(file, pendingAllFiles)
+                pendingFile = null
+                pendingAllFiles = emptyList()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
@@ -64,19 +72,14 @@ class MainActivity : AppCompatActivity() {
 
         adapter = MusicAdapter(emptyList()) { file ->
             val allFiles = Prefs.loadFiles(this)
-            ensureServiceStarted()
-            musicService?.play(file, allFiles) ?: run {
-                val intent = Intent(this, MusicService::class.java)
-                startForegroundService(intent)
-                // Re-bind and play after connect
-                bindService(intent, object : ServiceConnection {
-                    override fun onServiceConnected(name: ComponentName, service: IBinder) {
-                        val binder = service as MusicService.MusicBinder
-                        binder.getService().play(file, allFiles)
-                        unbindService(this)
-                    }
-                    override fun onServiceDisconnected(name: ComponentName) {}
-                }, Context.BIND_AUTO_CREATE)
+            if (bound && musicService != null) {
+                musicService?.play(file, allFiles)
+            } else {
+                // Service not yet bound; start it as foreground and store pending request.
+                // The main serviceConnection (onStart) will call play once connected.
+                pendingFile = file
+                pendingAllFiles = allFiles
+                ensureServiceStarted()
             }
         }
 
@@ -195,5 +198,8 @@ class MainActivity : AppCompatActivity() {
     private fun ensureServiceStarted() {
         val intent = Intent(this, MusicService::class.java)
         startForegroundService(intent)
+        if (!bound) {
+            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
     }
 }
