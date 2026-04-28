@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JustPlayback</string>
+    <string name="sort_by_time">Sort by date</string>
+    <string name="sort_by_name">Sort by name</string>
+    <string name="sort_by_size">Sort by size</string>
+    <string name="permission_denied">Storage permission is required to read music files.</string>
+    <string name="no_music">No music files found. Pull down to refresh.</string>
+    <string name="refreshing">Refreshing…</string>
+</resources>
