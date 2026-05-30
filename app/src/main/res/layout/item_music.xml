@@ -10,12 +10,8 @@
         android:id="@+id/tv_name"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:ellipsize="marquee"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:marqueeRepeatLimit="-1"
-        android:scrollHorizontally="true"
-        android:singleLine="true"
+        android:ellipsize="end"
+        android:maxLines="2"
         android:textStyle="bold"
         android:textSize="15sp" />
 

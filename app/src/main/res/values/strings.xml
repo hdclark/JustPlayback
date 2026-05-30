@@ -7,4 +7,14 @@
     <string name="permission_denied">Storage permission is required to read music files.</string>
     <string name="no_music">No music files found. Pull down to refresh.</string>
     <string name="refreshing">Refreshing…</string>
+    <string name="meta_playlist">Playlist</string>
+    <string name="action_remove_from_list">Remove from list</string>
+    <string name="action_add_to_playlist">Add to playlist</string>
+    <string name="new_playlist">New playlist…</string>
+    <string name="playlist_name_hint">Playlist name</string>
+    <string name="action_create">Create</string>
+    <string name="removed_from_list">Removed from list</string>
+    <string name="added_to_playlist">Added to \"%s\"</string>
+    <string name="error_playlist">Failed to update playlist</string>
+    <string name="m3u_empty">No playable files found in playlist</string>
 </resources>

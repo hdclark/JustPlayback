@@ -1,17 +1,21 @@
 package io.github.hdclark.justplayback
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.IBinder
 import android.provider.MediaStore
 import android.view.Menu
 import android.view.MenuItem
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -23,13 +27,19 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.AppBarLayout
+import java.io.BufferedReader
+import java.io.File
+import java.io.InputStreamReader
 import java.util.Locale
+import java.util.Random
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         /** Bottom padding for the file list, in dp, to give breathing room at the end of the list. */
         private const val LIST_BOTTOM_PADDING_DP = 8
+        private const val PLAYLIST_DIR = "playlists"
     }
 
     private lateinit var recyclerView: RecyclerView
@@ -112,20 +122,13 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        adapter = MusicAdapter(emptyList()) { file ->
-            val allFiles = Prefs.loadFiles(this)
-            // Always ensure the service is properly *started* (not just bound) so it
-            // survives the activity unbinding when the screen turns off.
-            ensureServiceStarted()
-            if (bound && musicService != null) {
-                musicService?.play(file, allFiles)
-            } else {
-                // Service not yet bound; start it as foreground and store pending request.
-                // The main serviceConnection (onStart) will call play once connected.
-                pendingFile = file
-                pendingAllFiles = allFiles
-            }
-        }
+        adapter = MusicAdapter(
+            files = emptyList(),
+            onClick = { file ->
+                if (file.isM3u) playM3u(file) else playFile(file)
+            },
+            onLongClick = { file -> showLongPressMenu(file) }
+        )
 
         recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
@@ -178,10 +181,28 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadAndDisplayFromPrefs() {
-        val files = Prefs.loadFiles(this)
+        val excluded = Prefs.loadExcluded(this)
+        val audioFiles = Prefs.loadFiles(this).filter { it.uri !in excluded }
+        val allFiles = audioFiles + loadLocalPlaylists()
         val sortOrder = Prefs.loadSortOrder(this)
-        val sorted = sortFiles(files, sortOrder)
+        val sorted = sortFiles(allFiles, sortOrder)
         adapter.updateFiles(sorted)
+    }
+
+    private fun loadLocalPlaylists(): List<MusicFile> {
+        val playlistDir = getExternalFilesDir(PLAYLIST_DIR) ?: return emptyList()
+        if (!playlistDir.exists()) return emptyList()
+        return playlistDir.listFiles { f -> f.extension.equals("m3u", ignoreCase = true) }
+            ?.map { f ->
+                MusicFile(
+                    id = f.name.hashCode().toLong(),
+                    name = f.name,
+                    uri = "file://${f.absolutePath}",
+                    size = f.length(),
+                    lastModified = f.lastModified() / 1000L,
+                    isM3u = true
+                )
+            } ?: emptyList()
     }
 
     private fun sortFiles(files: List<MusicFile>, order: Int): List<MusicFile> = when (order) {
@@ -203,7 +224,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Bug 1 fix: Trigger a media scan on common music directories before querying
+     * MediaStore, so files added during the current day are immediately visible.
+     * The MediaStore query runs in the scan-completion callback.
+     */
     private fun refreshFromMediaStore() {
+        val dirs = listOfNotNull(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PODCASTS),
+            @Suppress("DEPRECATION")
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_AUDIOBOOKS),
+        ).map { it.absolutePath }.toTypedArray()
+
+        if (dirs.isEmpty()) {
+            queryMediaStoreAndUpdateList()
+            return
+        }
+
+        val pending = AtomicInteger(dirs.size)
+        MediaScannerConnection.scanFile(this, dirs, null) { _, _ ->
+            if (pending.decrementAndGet() == 0) {
+                runOnUiThread { queryMediaStoreAndUpdateList() }
+            }
+        }
+    }
+
+    private fun queryMediaStoreAndUpdateList() {
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
@@ -225,9 +273,7 @@ class MainActivity : AppCompatActivity() {
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
                 val name = cursor.getString(nameCol)?.trim().orEmpty()
-                if (name.isEmpty()) {
-                    continue
-                }
+                if (name.isEmpty()) continue
                 val fileUri = android.content.ContentUris.withAppendedId(uri, id).toString()
                 files.add(
                     MusicFile(
@@ -241,12 +287,177 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        Prefs.saveFiles(this, files)
+        val excluded = Prefs.loadExcluded(this)
+        val filteredAudio = files.filter { it.uri !in excluded }
+        Prefs.saveFiles(this, filteredAudio)
+
+        val allFiles = filteredAudio + loadLocalPlaylists()
         val sortOrder = Prefs.loadSortOrder(this)
-        val sorted = sortFiles(files, sortOrder)
+        val sorted = sortFiles(allFiles, sortOrder)
         adapter.updateFiles(sorted)
         swipeRefresh.isRefreshing = false
     }
+
+    // -------------------------------------------------------------------------
+    // Playback helpers
+    // -------------------------------------------------------------------------
+
+    private fun playFile(file: MusicFile) {
+        val allFiles = Prefs.loadFiles(this)
+        ensureServiceStarted()
+        if (bound && musicService != null) {
+            musicService?.play(file, allFiles)
+        } else {
+            pendingFile = file
+            pendingAllFiles = allFiles
+        }
+    }
+
+    /**
+     * Feature 4: parse an M3U playlist file and start shuffled playback of its contents.
+     */
+    private fun playM3u(file: MusicFile) {
+        val resolved = resolveM3u(file)
+        if (resolved.isEmpty()) {
+            Toast.makeText(this, R.string.m3u_empty, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val shuffled = resolved.shuffled(Random())
+        ensureServiceStarted()
+        if (bound && musicService != null) {
+            musicService?.play(shuffled.first(), shuffled)
+        } else {
+            pendingFile = shuffled.first()
+            pendingAllFiles = shuffled
+        }
+    }
+
+    /**
+     * Parse an M3U file stored in the app's playlist directory and return a list of MusicFiles.
+     * Lines starting with '#' are directives/comments; other non-empty lines are content URIs.
+     */
+    private fun resolveM3u(file: MusicFile): List<MusicFile> {
+        val result = mutableListOf<MusicFile>()
+        try {
+            val path = file.uri.removePrefix("file://")
+            var pendingTitle: String? = null
+            BufferedReader(InputStreamReader(File(path).inputStream())).use { reader ->
+                reader.forEachLine { raw ->
+                    val line = raw.trim()
+                    when {
+                        line.startsWith("#EXTINF:") -> {
+                            pendingTitle = line.substringAfter(",", "").takeIf { it.isNotEmpty() }
+                        }
+                        line.startsWith("#") || line.isEmpty() -> Unit
+                        else -> {
+                            val name = pendingTitle ?: line.substringAfterLast("/")
+                            result.add(
+                                MusicFile(
+                                    id = line.hashCode().toLong(),
+                                    name = name,
+                                    uri = line,
+                                    size = 0L,
+                                    lastModified = 0L
+                                )
+                            )
+                            pendingTitle = null
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) { }
+        return result
+    }
+
+    // -------------------------------------------------------------------------
+    // Long-press menu — Feature 5
+    // -------------------------------------------------------------------------
+
+    private fun showLongPressMenu(file: MusicFile) {
+        if (file.isM3u) return
+        val items = arrayOf(
+            getString(R.string.action_remove_from_list),
+            getString(R.string.action_add_to_playlist)
+        )
+        AlertDialog.Builder(this)
+            .setTitle(file.name)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> removeFromList(file)
+                    1 -> addToPlaylist(file)
+                }
+            }
+            .show()
+    }
+
+    /**
+     * Adds the file's URI to a persistent exclusion set so it is filtered out on every
+     * subsequent load or refresh, effectively hiding it from the list permanently.
+     */
+    private fun removeFromList(file: MusicFile) {
+        val excluded = Prefs.loadExcluded(this).toMutableSet()
+        excluded.add(file.uri)
+        Prefs.saveExcluded(this, excluded)
+        loadAndDisplayFromPrefs()
+        Toast.makeText(this, R.string.removed_from_list, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Shows a dialog listing existing playlists plus a "New playlist…" option.
+     * The chosen or newly created .m3u file gets an entry appended for this audio file.
+     */
+    private fun addToPlaylist(file: MusicFile) {
+        val playlistDir = getExternalFilesDir(PLAYLIST_DIR) ?: return
+        playlistDir.mkdirs()
+        val existing = playlistDir.listFiles { f -> f.extension.equals("m3u", ignoreCase = true) }
+            ?.sortedBy { it.name } ?: emptyList()
+
+        val options = mutableListOf(getString(R.string.new_playlist))
+        existing.forEach { options.add(it.nameWithoutExtension) }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.action_add_to_playlist)
+            .setItems(options.toTypedArray()) { _, which ->
+                if (which == 0) {
+                    promptNewPlaylistName(file, playlistDir)
+                } else {
+                    appendToPlaylist(file, existing[which - 1])
+                }
+            }
+            .show()
+    }
+
+    private fun promptNewPlaylistName(file: MusicFile, dir: File) {
+        val input = EditText(this).apply { hint = getString(R.string.playlist_name_hint) }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.new_playlist)
+            .setView(input)
+            .setPositiveButton(R.string.action_create) { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    appendToPlaylist(file, File(dir, "$name.m3u"))
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun appendToPlaylist(file: MusicFile, playlist: File) {
+        try {
+            if (!playlist.exists()) playlist.writeText("#EXTM3U\n")
+            playlist.appendText("#EXTINF:-1,${file.name}\n${file.uri}\n")
+            loadAndDisplayFromPrefs()
+            Toast.makeText(
+                this,
+                getString(R.string.added_to_playlist, playlist.nameWithoutExtension),
+                Toast.LENGTH_SHORT
+            ).show()
+        } catch (_: Exception) {
+            Toast.makeText(this, R.string.error_playlist, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // -------------------------------------------------------------------------
 
     private fun ensureServiceStarted() {
         val intent = Intent(this, MusicService::class.java)
