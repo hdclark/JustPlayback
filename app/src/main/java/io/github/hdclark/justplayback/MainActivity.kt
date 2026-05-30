@@ -195,7 +195,7 @@ class MainActivity : AppCompatActivity() {
         return playlistDir.listFiles { f -> f.extension.equals("m3u", ignoreCase = true) }
             ?.map { f ->
                 MusicFile(
-                    id = f.name.hashCode().toLong(),
+                    id = f.absolutePath.hashCode().toLong(),
                     name = f.name,
                     uri = "file://${f.absolutePath}",
                     size = f.length(),
@@ -341,6 +341,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val path = file.uri.removePrefix("file://")
             var pendingTitle: String? = null
+            var index = 0
             BufferedReader(InputStreamReader(File(path).inputStream())).use { reader ->
                 reader.forEachLine { raw ->
                     val line = raw.trim()
@@ -353,7 +354,7 @@ class MainActivity : AppCompatActivity() {
                             val name = pendingTitle ?: line.substringAfterLast("/")
                             result.add(
                                 MusicFile(
-                                    id = line.hashCode().toLong(),
+                                    id = index.toLong(),
                                     name = name,
                                     uri = line,
                                     size = 0L,
@@ -361,11 +362,14 @@ class MainActivity : AppCompatActivity() {
                                 )
                             )
                             pendingTitle = null
+                            index++
                         }
                     }
                 }
             }
-        } catch (_: Exception) { }
+        } catch (_: Exception) {
+            Toast.makeText(this, R.string.error_playlist, Toast.LENGTH_SHORT).show()
+        }
         return result
     }
 
@@ -444,8 +448,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendToPlaylist(file: MusicFile, playlist: File) {
         try {
-            if (!playlist.exists()) playlist.writeText("#EXTM3U\n")
-            playlist.appendText("#EXTINF:-1,${file.name}\n${file.uri}\n")
+            val entry = "#EXTINF:-1,${file.name}\n${file.uri}\n"
+            if (!playlist.exists()) {
+                playlist.writeText("#EXTM3U\n$entry")
+            } else {
+                playlist.appendText(entry)
+            }
             loadAndDisplayFromPrefs()
             Toast.makeText(
                 this,
