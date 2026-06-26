@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="auto_play"
+        android:shortcutShortLabel="@string/shortcut_auto_play">
+        <intent
+            android:action="io.github.hdclark.justplayback.AUTO_PLAY"
+            android:targetClass="io.github.hdclark.justplayback.MainActivity"
+            android:targetPackage="io.github.hdclark.justplayback" />
+    </shortcut>
+</shortcuts>

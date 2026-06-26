@@ -8,4 +8,7 @@ data class MusicFile(
     val uri: String,
     val size: Long,
     val lastModified: Long
-) : Serializable
+) : Serializable {
+    val isPlaylist: Boolean
+        get() = name.endsWith(".m3u", ignoreCase = true)
+}
