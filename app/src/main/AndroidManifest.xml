@@ -21,21 +21,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.JustPlayback">
 
-        <meta-data
-            android:name="android.app.shortcuts"
-            android:resource="@xml/shortcuts" />
-
         <activity
             android:name=".MainActivity"
             android:exported="true">
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="io.github.hdclark.justplayback.PLAY_RANDOM" />
-                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
 

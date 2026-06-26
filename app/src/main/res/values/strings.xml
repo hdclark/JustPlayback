@@ -17,4 +17,5 @@
     <string name="playlist_long_press_hint">Long-press playlists to open them.</string>
     <string name="play_random">Play random</string>
     <string name="play_random_shortcut">Start playback with a random track</string>
+    <string name="playlist_write_failed">Unable to update playlist.</string>
 </resources>

@@ -16,6 +16,7 @@ import android.view.View
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SearchView
@@ -53,6 +54,7 @@ class MainActivity : AppCompatActivity() {
     private var activePlaylistFiles: List<MusicFile> = emptyList()
     private var searchQuery = ""
     private var shouldPlayRandomOnConnect = false
+    private var pendingPlaylistWrite: (() -> Unit)? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -76,6 +78,16 @@ class MainActivity : AppCompatActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* Result is informational; service will handle gracefully without it */ }
+
+    private val playlistWritePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val action = pendingPlaylistWrite
+        pendingPlaylistWrite = null
+        if (result.resultCode == RESULT_OK && action != null) {
+            writePlaylistWithPermissionRetry(action)
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -357,9 +369,19 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.create_playlist)
             .setView(input)
             .setPositiveButton(R.string.save_playlist) { _, _ ->
-                val created = PlaylistStorage.savePlaylist(this, input.text.toString(), listOf(file))
-                if (created != null) {
-                    refreshFromMediaStore()
+                val playlistName = input.text.toString()
+                val existing = defaultFiles.firstOrNull {
+                    it.isPlaylist && it.name.equals(ensurePlaylistName(playlistName), ignoreCase = true)
+                }
+                if (existing != null) {
+                    addFileToPlaylist(file, existing)
+                } else {
+                    writePlaylistWithPermissionRetry {
+                        val created = PlaylistStorage.savePlaylist(this, playlistName, listOf(file))
+                        if (created != null) {
+                            refreshFromMediaStore()
+                        }
+                    }
                 }
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -367,11 +389,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun addFileToPlaylist(file: MusicFile, playlist: MusicFile) {
-        val currentEntries = PlaylistStorage.loadPlaylistEntries(this, playlist, defaultFiles)
-        val updated = (currentEntries + file).distinctBy { it.uri }
-        if (PlaylistStorage.savePlaylist(this, playlist.name, updated) != null) {
-            refreshFromMediaStore()
+        writePlaylistWithPermissionRetry {
+            if (PlaylistStorage.addFileToPlaylist(this, playlist, file) != null) {
+                refreshFromMediaStore()
+            }
         }
+    }
+
+    private fun writePlaylistWithPermissionRetry(action: () -> Unit) {
+        try {
+            action()
+        } catch (exception: PlaylistStorage.PlaylistWritePermissionException) {
+            pendingPlaylistWrite = action
+            playlistWritePermissionLauncher.launch(
+                IntentSenderRequest.Builder(exception.intentSender).build()
+            )
+        } catch (exception: SecurityException) {
+            Toast.makeText(this, R.string.playlist_write_failed, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun ensurePlaylistName(name: String): String {
+        val trimmed = name.trim().ifEmpty { "Playlist" }
+        return if (trimmed.lowercase(Locale.ROOT).endsWith(".m3u")) trimmed else "$trimmed.m3u"
     }
 
     private fun openPlaylist(playlist: MusicFile) {

@@ -3,6 +3,8 @@ package io.github.hdclark.justplayback
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.app.RecoverableSecurityException
+import android.content.IntentSender
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -11,6 +13,8 @@ import java.io.File
 import java.util.Locale
 
 object PlaylistStorage {
+    class PlaylistWritePermissionException(val intentSender: IntentSender) : Exception()
+
     private const val PLAYLIST_EXTENSION = ".m3u"
     private const val PLAYLIST_MIME_TYPE = "audio/x-mpegurl"
 
@@ -63,14 +67,16 @@ object PlaylistStorage {
 
     private fun queryAudioFiles(context: Context): List<MusicFile> {
         val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Audio.Media.SIZE,
-            MediaStore.Audio.Media.DATE_MODIFIED,
-            MediaStore.MediaColumns.RELATIVE_PATH,
-            MediaStore.MediaColumns.DATA,
-        )
+        val projection = buildList {
+            add(MediaStore.Audio.Media._ID)
+            add(MediaStore.Audio.Media.DISPLAY_NAME)
+            add(MediaStore.Audio.Media.SIZE)
+            add(MediaStore.Audio.Media.DATE_MODIFIED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaStore.MediaColumns.RELATIVE_PATH)
+            }
+            add(MediaStore.MediaColumns.DATA)
+        }.toTypedArray()
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} = ? AND ${MediaStore.Audio.Media.MIME_TYPE} LIKE ?"
         val selectionArgs = arrayOf("1", "audio/%")
         val files = mutableListOf<MusicFile>()
@@ -183,7 +189,7 @@ object PlaylistStorage {
 
     private fun savePlaylistScoped(context: Context, name: String, body: String): MusicFile? {
         val existing = scanLibrary(context).firstOrNull { it.isPlaylist && it.name.equals(name, ignoreCase = true) }
-        val playlistUri = existing?.let(Uri::parse) ?: context.contentResolver.insert(
+        val playlistUri = existing?.uri?.let(Uri::parse) ?: context.contentResolver.insert(
             MediaStore.Files.getContentUri("external"),
             ContentValues().apply {
                 put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
@@ -192,11 +198,45 @@ object PlaylistStorage {
             }
         ) ?: return null
 
-        context.contentResolver.openOutputStream(playlistUri, "wt")?.bufferedWriter()?.use {
-            it.write(body)
-        } ?: return null
+        writePlaylistText(context, playlistUri, body)
 
         return scanLibrary(context).firstOrNull { it.isPlaylist && it.uri == playlistUri.toString() }
+    }
+
+    fun addFileToPlaylist(context: Context, playlist: MusicFile, file: MusicFile): MusicFile? {
+        val existingLines = readPlaylistRawLines(context, playlist).toMutableList()
+        val entry = file.relativePath ?: file.name
+        val hasEntry = existingLines
+            .filterNot { it.trim().startsWith("#") }
+            .any { normalizePath(it) == normalizePath(entry) }
+        if (!hasEntry) {
+            if (existingLines.isEmpty()) {
+                existingLines += "#EXTM3U"
+            }
+            existingLines += entry
+        }
+        val body = existingLines.joinToString(separator = "\n", postfix = "\n")
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            savePlaylistScoped(context, playlist.name, body)
+        } else {
+            val uri = Uri.parse(playlist.uri)
+            if (uri.scheme == "file" && uri.path != null) {
+                File(uri.path!!).writeText(body)
+                playlist
+            } else {
+                savePlaylistLegacy(playlist.name, body)
+            }
+        }
+    }
+
+    private fun writePlaylistText(context: Context, playlistUri: Uri, body: String) {
+        try {
+            context.contentResolver.openOutputStream(playlistUri, "wt")?.bufferedWriter()?.use {
+                it.write(body)
+            } ?: throw SecurityException("Unable to open playlist for writing")
+        } catch (exception: RecoverableSecurityException) {
+            throw PlaylistWritePermissionException(exception.userAction.actionIntent.intentSender)
+        }
     }
 
     private fun savePlaylistLegacy(name: String, body: String): MusicFile? {
@@ -218,17 +258,20 @@ object PlaylistStorage {
     }
 
     private fun readPlaylistLines(context: Context, playlist: MusicFile): List<String> {
+        return readPlaylistRawLines(context, playlist)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .toList()
+    }
+
+    private fun readPlaylistRawLines(context: Context, playlist: MusicFile): List<String> {
         val uri = Uri.parse(playlist.uri)
         val text = when (uri.scheme) {
             "content" -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
             "file" -> uri.path?.let(::File)?.takeIf { it.exists() }?.readText()
             else -> null
         } ?: return emptyList()
-
-        return text.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
-            .toList()
+        return text.lineSequence().toList()
     }
 
     private fun ensurePlaylistName(name: String): String {

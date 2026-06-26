@@ -12,6 +12,5 @@
 
     <style name="ThemeOverlay.JustPlayback.PopupMenu" parent="ThemeOverlay.AppCompat.Dark">
         <item name="android:textColorPrimary">@android:color/white</item>
-        <item name="textColorPrimary">@android:color/white</item>
     </style>
 </resources>
