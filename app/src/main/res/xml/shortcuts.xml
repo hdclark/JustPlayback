@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="play_random"
+        android:shortcutLongLabel="@string/play_random_shortcut"
+        android:shortcutShortLabel="@string/play_random">
+        <intent
+            android:action="io.github.hdclark.justplayback.PLAY_RANDOM"
+            android:targetClass="io.github.hdclark.justplayback.MainActivity"
+            android:targetPackage="io.github.hdclark.justplayback" />
+    </shortcut>
+
+</shortcuts>

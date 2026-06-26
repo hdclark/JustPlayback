@@ -26,6 +26,8 @@ object Prefs {
             obj.put("uri", f.uri)
             obj.put("size", f.size)
             obj.put("lastModified", f.lastModified)
+            obj.put("relativePath", f.relativePath)
+            obj.put("isPlaylist", f.isPlaylist)
             array.put(obj)
         }
         prefs(context).edit().putString(KEY_FILES, array.toString()).apply()
@@ -44,7 +46,9 @@ object Prefs {
                         name = obj.getString("name"),
                         uri = obj.getString("uri"),
                         size = obj.getLong("size"),
-                        lastModified = obj.getLong("lastModified")
+                        lastModified = obj.getLong("lastModified"),
+                        relativePath = obj.optString("relativePath").ifBlank { null },
+                        isPlaylist = obj.optBoolean("isPlaylist", false)
                     )
                 )
             }

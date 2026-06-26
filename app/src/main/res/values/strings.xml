@@ -7,4 +7,14 @@
     <string name="permission_denied">Storage permission is required to read music files.</string>
     <string name="no_music">No music files found. Pull down to refresh.</string>
     <string name="refreshing">Refreshing…</string>
+    <string name="search">Search</string>
+    <string name="search_hint">Search files</string>
+    <string name="remove_from_list">Remove from list</string>
+    <string name="add_to_playlist">Add to playlist</string>
+    <string name="create_playlist">Create playlist</string>
+    <string name="new_playlist_name">Playlist name</string>
+    <string name="save_playlist">Save</string>
+    <string name="playlist_long_press_hint">Long-press playlists to open them.</string>
+    <string name="play_random">Play random</string>
+    <string name="play_random_shortcut">Start playback with a random track</string>
 </resources>

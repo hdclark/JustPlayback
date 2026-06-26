@@ -1,6 +1,7 @@
 package io.github.hdclark.justplayback
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,12 +10,15 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.provider.MediaStore
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SearchView
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -24,12 +28,16 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.AppBarLayout
 import java.util.Locale
+import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         /** Bottom padding for the file list, in dp, to give breathing room at the end of the list. */
         private const val LIST_BOTTOM_PADDING_DP = 8
+        private const val ACTION_PLAY_RANDOM = "io.github.hdclark.justplayback.PLAY_RANDOM"
+        private const val MENU_REMOVE_FROM_LIST = 10_001
+        private const val MENU_ADD_TO_PLAYLIST = 10_002
     }
 
     private lateinit var recyclerView: RecyclerView
@@ -40,6 +48,11 @@ class MainActivity : AppCompatActivity() {
     private var bound = false
     private var pendingFile: MusicFile? = null
     private var pendingAllFiles: List<MusicFile> = emptyList()
+    private var defaultFiles: List<MusicFile> = emptyList()
+    private var activePlaylist: MusicFile? = null
+    private var activePlaylistFiles: List<MusicFile> = emptyList()
+    private var searchQuery = ""
+    private var shouldPlayRandomOnConnect = false
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -72,10 +85,16 @@ class MainActivity : AppCompatActivity() {
         } else {
             Manifest.permission.READ_EXTERNAL_STORAGE
         }
+        val writePermission = Manifest.permission.WRITE_EXTERNAL_STORAGE
         val storageGranted = permissions[storagePermission] ?: (
             ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED
         )
-        if (storageGranted) {
+        val writeGranted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q || (
+            permissions[writePermission] ?: (
+                ContextCompat.checkSelfPermission(this, writePermission) == PackageManager.PERMISSION_GRANTED
+            )
+        )
+        if (storageGranted && writeGranted) {
             refreshFromMediaStore()
         } else {
             Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
@@ -112,20 +131,11 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        adapter = MusicAdapter(emptyList()) { file ->
-            val allFiles = Prefs.loadFiles(this)
-            // Always ensure the service is properly *started* (not just bound) so it
-            // survives the activity unbinding when the screen turns off.
-            ensureServiceStarted()
-            if (bound && musicService != null) {
-                musicService?.play(file, allFiles)
-            } else {
-                // Service not yet bound; start it as foreground and store pending request.
-                // The main serviceConnection (onStart) will call play once connected.
-                pendingFile = file
-                pendingAllFiles = allFiles
-            }
-        }
+        adapter = MusicAdapter(
+            emptyList(),
+            onClick = { file -> onFileClicked(file) },
+            onLongClick = { view, file -> onFileLongPressed(view, file) }
+        )
 
         recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
@@ -136,6 +146,21 @@ class MainActivity : AppCompatActivity() {
 
         // Load from prefs on startup (no MediaStore query)
         loadAndDisplayFromPrefs()
+        maybeHandleLaunchIntent(intent)
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (activePlaylist != null) {
+                    activePlaylist = null
+                    activePlaylistFiles = emptyList()
+                    supportActionBar?.title = getString(R.string.app_name)
+                    applyDisplayState()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
 
         // Ask for notification permission early so the foreground service can show controls
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -152,6 +177,12 @@ class MainActivity : AppCompatActivity() {
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        maybeHandleLaunchIntent(intent)
+    }
+
     override fun onStop() {
         super.onStop()
         if (bound) {
@@ -162,6 +193,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main_menu, menu)
+        val searchView = menu.findItem(R.id.action_search).actionView as SearchView
+        searchView.queryHint = getString(R.string.search_hint)
+        searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+            override fun onQueryTextSubmit(query: String?): Boolean = false
+
+            override fun onQueryTextChange(newText: String?): Boolean {
+                searchQuery = newText.orEmpty()
+                applyDisplayState()
+                return true
+            }
+        })
         return true
     }
 
@@ -173,79 +215,53 @@ class MainActivity : AppCompatActivity() {
             else -> return super.onOptionsItemSelected(item)
         }
         Prefs.saveSortOrder(this, sortOrder)
-        loadAndDisplayFromPrefs()
+        applyDisplayState()
         return true
     }
 
     private fun loadAndDisplayFromPrefs() {
-        val files = Prefs.loadFiles(this)
-        val sortOrder = Prefs.loadSortOrder(this)
-        val sorted = sortFiles(files, sortOrder)
-        adapter.updateFiles(sorted)
+        defaultFiles = Prefs.loadFiles(this)
+        activePlaylist = null
+        activePlaylistFiles = emptyList()
+        supportActionBar?.title = getString(R.string.app_name)
+        applyDisplayState()
     }
 
-    private fun sortFiles(files: List<MusicFile>, order: Int): List<MusicFile> = when (order) {
-        Prefs.SORT_ALPHA -> files.sortedBy { it.name.lowercase(Locale.ROOT) }
-        Prefs.SORT_SIZE -> files.sortedByDescending { it.size }
-        else -> files.sortedByDescending { it.lastModified }
+    private fun sortFiles(files: List<MusicFile>, order: Int): List<MusicFile> {
+        val comparator = when (order) {
+            Prefs.SORT_ALPHA -> compareBy<MusicFile> { it.name.lowercase(Locale.ROOT) }
+            Prefs.SORT_SIZE -> compareByDescending<MusicFile> { it.size }
+            else -> compareByDescending<MusicFile> { it.lastModified }
+        }
+        return files.sortedWith(compareByDescending<MusicFile> { it.isPlaylist }.then(comparator))
     }
 
     private fun checkPermissionsAndRefresh() {
-        val storagePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        if (ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED) {
+        val permissions = buildStoragePermissions()
+        if (permissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }) {
             refreshFromMediaStore()
         } else {
-            permissionLauncher.launch(arrayOf(storagePermission))
+            permissionLauncher.launch(permissions.toTypedArray())
         }
     }
 
     private fun refreshFromMediaStore() {
-        val uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(
-            MediaStore.Audio.Media._ID,
-            MediaStore.Audio.Media.DISPLAY_NAME,
-            MediaStore.Audio.Media.MIME_TYPE,
-            MediaStore.Audio.Media.SIZE,
-            MediaStore.Audio.Media.DATE_MODIFIED,
-        )
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} = ? AND ${MediaStore.Audio.Media.MIME_TYPE} LIKE ?"
-        val selectionArgs = arrayOf("1", "audio/%")
-        val files = mutableListOf<MusicFile>()
-
-        contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
-            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
-            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
-            val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
-            val modCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
-
-            while (cursor.moveToNext()) {
-                val id = cursor.getLong(idCol)
-                val name = cursor.getString(nameCol)?.trim().orEmpty()
-                if (name.isEmpty()) {
-                    continue
-                }
-                val fileUri = android.content.ContentUris.withAppendedId(uri, id).toString()
-                files.add(
-                    MusicFile(
-                        id = id,
-                        name = name,
-                        uri = fileUri,
-                        size = cursor.getLong(sizeCol),
-                        lastModified = cursor.getLong(modCol)
-                    )
-                )
-            }
-        }
-
+        val files = PlaylistStorage.scanLibrary(this)
         Prefs.saveFiles(this, files)
-        val sortOrder = Prefs.loadSortOrder(this)
-        val sorted = sortFiles(files, sortOrder)
-        adapter.updateFiles(sorted)
+        defaultFiles = files
+        val currentPlaylist = activePlaylist
+        if (currentPlaylist != null) {
+            activePlaylist = defaultFiles.firstOrNull { it.uri == currentPlaylist.uri }
+            activePlaylistFiles = activePlaylist?.let { PlaylistStorage.loadPlaylistEntries(this, it, defaultFiles) }.orEmpty()
+            supportActionBar?.title = activePlaylist?.name ?: getString(R.string.app_name)
+        } else {
+            supportActionBar?.title = getString(R.string.app_name)
+        }
+        applyDisplayState()
         swipeRefresh.isRefreshing = false
+        if (shouldPlayRandomOnConnect) {
+            playRandomTrack()
+        }
     }
 
     private fun ensureServiceStarted() {
@@ -254,5 +270,166 @@ class MainActivity : AppCompatActivity() {
         if (!bound) {
             bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         }
+    }
+
+    private fun onFileClicked(file: MusicFile) {
+        if (file.isPlaylist) {
+            Toast.makeText(this, R.string.playlist_long_press_hint, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val allFiles = currentPlayableFiles()
+        if (allFiles.none { it.uri == file.uri }) {
+            return
+        }
+        ensureServiceStarted()
+        if (bound && musicService != null) {
+            musicService?.play(file, allFiles)
+        } else {
+            pendingFile = file
+            pendingAllFiles = allFiles
+        }
+    }
+
+    private fun onFileLongPressed(anchor: View, file: MusicFile) {
+        if (file.isPlaylist) {
+            openPlaylist(file)
+            return
+        }
+
+        val popup = androidx.appcompat.widget.PopupMenu(this, anchor)
+        popup.menu.add(0, MENU_REMOVE_FROM_LIST, 0, R.string.remove_from_list)
+        popup.menu.add(0, MENU_ADD_TO_PLAYLIST, 1, R.string.add_to_playlist)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_REMOVE_FROM_LIST -> {
+                    removeFileFromCurrentList(file)
+                    true
+                }
+                MENU_ADD_TO_PLAYLIST -> {
+                    showAddToPlaylistDialog(file)
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun removeFileFromCurrentList(file: MusicFile) {
+        val playlist = activePlaylist
+        if (playlist != null) {
+            val updated = activePlaylistFiles.filterNot { it.uri == file.uri }
+            if (PlaylistStorage.savePlaylist(this, playlist.name, updated) != null) {
+                refreshFromMediaStore()
+            }
+        } else {
+            defaultFiles = defaultFiles.filterNot { it.uri == file.uri }
+            Prefs.saveFiles(this, defaultFiles)
+            applyDisplayState()
+        }
+    }
+
+    private fun showAddToPlaylistDialog(file: MusicFile) {
+        val playlistFiles = defaultFiles.filter { it.isPlaylist }.sortedBy { it.name.lowercase(Locale.ROOT) }
+        val labels = buildList {
+            add(getString(R.string.create_playlist))
+            addAll(playlistFiles.map { it.name })
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.add_to_playlist)
+            .setItems(labels.toTypedArray()) { _, which ->
+                if (which == 0) {
+                    showCreatePlaylistDialog(file)
+                } else {
+                    addFileToPlaylist(file, playlistFiles[which - 1])
+                }
+            }
+            .show()
+    }
+
+    private fun showCreatePlaylistDialog(file: MusicFile) {
+        val input = EditText(this).apply {
+            hint = getString(R.string.new_playlist_name)
+            setSingleLine()
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.create_playlist)
+            .setView(input)
+            .setPositiveButton(R.string.save_playlist) { _, _ ->
+                val created = PlaylistStorage.savePlaylist(this, input.text.toString(), listOf(file))
+                if (created != null) {
+                    refreshFromMediaStore()
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun addFileToPlaylist(file: MusicFile, playlist: MusicFile) {
+        val currentEntries = PlaylistStorage.loadPlaylistEntries(this, playlist, defaultFiles)
+        val updated = (currentEntries + file).distinctBy { it.uri }
+        if (PlaylistStorage.savePlaylist(this, playlist.name, updated) != null) {
+            refreshFromMediaStore()
+        }
+    }
+
+    private fun openPlaylist(playlist: MusicFile) {
+        activePlaylist = playlist
+        activePlaylistFiles = PlaylistStorage.loadPlaylistEntries(this, playlist, defaultFiles)
+        supportActionBar?.title = playlist.name
+        applyDisplayState()
+    }
+
+    private fun currentBaseFiles(): List<MusicFile> = activePlaylistFiles.takeIf { activePlaylist != null } ?: defaultFiles
+
+    private fun currentPlayableFiles(): List<MusicFile> = currentBaseFiles().filterNot { it.isPlaylist }
+
+    private fun applyDisplayState() {
+        val filtered = filterFiles(currentBaseFiles(), searchQuery)
+        adapter.updateFiles(sortFiles(filtered, Prefs.loadSortOrder(this)))
+    }
+
+    private fun filterFiles(files: List<MusicFile>, query: String): List<MusicFile> {
+        val needle = query.trim().lowercase(Locale.ROOT)
+        if (needle.isEmpty()) {
+            return files
+        }
+        return files.filter { it.name.lowercase(Locale.ROOT).contains(needle) }
+    }
+
+    private fun maybeHandleLaunchIntent(intent: Intent?) {
+        if (intent?.action != ACTION_PLAY_RANDOM) {
+            return
+        }
+        if (defaultFiles.isEmpty()) {
+            shouldPlayRandomOnConnect = true
+            checkPermissionsAndRefresh()
+            return
+        }
+        playRandomTrack()
+    }
+
+    private fun playRandomTrack() {
+        val playableFiles = defaultFiles.filterNot { it.isPlaylist }
+        if (playableFiles.isEmpty()) {
+            shouldPlayRandomOnConnect = false
+            return
+        }
+        shouldPlayRandomOnConnect = false
+        onFileClicked(playableFiles[Random.nextInt(playableFiles.size)])
+    }
+
+    private fun buildStoragePermissions(): List<String> {
+        val permissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions += Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            permissions += Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            permissions += Manifest.permission.WRITE_EXTERNAL_STORAGE
+        }
+        return permissions
     }
 }

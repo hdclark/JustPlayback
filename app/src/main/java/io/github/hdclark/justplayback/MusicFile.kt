@@ -7,5 +7,7 @@ data class MusicFile(
     val name: String,
     val uri: String,
     val size: Long,
-    val lastModified: Long
+    val lastModified: Long,
+    val relativePath: String? = null,
+    val isPlaylist: Boolean = false
 ) : Serializable
