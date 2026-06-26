@@ -400,7 +400,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendToPlaylist(playlistUri: Uri, file: MusicFile): Boolean {
         return try {
-            val line = "${file.uri}\n"
+            val line = "${playlistEntryFor(file, playlistUri)}\n"
             if (playlistUri.scheme == "file") {
                 appendLineToFilePlaylist(File(requireNotNull(playlistUri.path)), line)
             } else {
@@ -417,6 +417,39 @@ class MainActivity : AppCompatActivity() {
         } catch (_: IOException) {
             Toast.makeText(this, R.string.playlist_empty, Toast.LENGTH_LONG).show()
             false
+        }
+    }
+
+    private fun playlistEntryFor(file: MusicFile, playlistUri: Uri): String {
+        val path = file.path ?: return file.uri
+        if (playlistUri.scheme == "file") {
+            val playlistDirectory = playlistUri.path?.let { File(it).parentFile }
+            return relativePathFromDirectory(path, playlistDirectory) ?: path
+        }
+        return relativePathFromMusicDirectory(path) ?: path
+    }
+
+    private fun relativePathFromDirectory(path: String, directory: File?): String? {
+        if (directory == null) return null
+        return try {
+            directory.toPath().relativize(File(path).toPath()).toString()
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    }
+
+    private fun relativePathFromMusicDirectory(path: String): String? {
+        val normalized = normalizePath(path)
+        val musicPrefix = "${Environment.DIRECTORY_MUSIC}/"
+        if (normalized.startsWith(musicPrefix)) {
+            return normalized.removePrefix(musicPrefix)
+        }
+        val musicSegment = "/$musicPrefix"
+        val musicIndex = normalized.indexOf(musicSegment)
+        return if (musicIndex >= 0) {
+            normalized.substring(musicIndex + musicSegment.length)
+        } else {
+            null
         }
     }
 
@@ -529,8 +562,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun autoPlayRandomWhenReady() {
         val playable = Prefs.loadFiles(this).filterNot { it.isPlaylist }
-        val file = playable.randomOrNull() ?: return
         pendingAutoPlay = false
+        val file = playable.randomOrNull() ?: return
         playFile(file, playable)
     }
 
