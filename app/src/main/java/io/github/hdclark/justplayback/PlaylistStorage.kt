@@ -187,10 +187,15 @@ object PlaylistStorage {
             .toList()
     }
 
-    private fun savePlaylistScoped(context: Context, name: String, body: String): MusicFile? {
+    private fun savePlaylistScoped(
+        context: Context,
+        name: String,
+        body: String,
+        targetUri: Uri? = null,
+    ): MusicFile? {
         val existing = scanLibrary(context).firstOrNull { it.isPlaylist && it.name.equals(name, ignoreCase = true) }
-        val playlistUri = existing?.uri?.let(Uri::parse) ?: context.contentResolver.insert(
-            MediaStore.Files.getContentUri("external"),
+        val playlistUri = targetUri ?: existing?.uri?.let(Uri::parse) ?: context.contentResolver.insert(
+            MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
             ContentValues().apply {
                 put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
                 put(MediaStore.Files.FileColumns.MIME_TYPE, PLAYLIST_MIME_TYPE)
@@ -217,7 +222,7 @@ object PlaylistStorage {
         }
         val body = existingLines.joinToString(separator = "\n", postfix = "\n")
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            savePlaylistScoped(context, playlist.name, body)
+            savePlaylistScoped(context, playlist.name, body, Uri.parse(playlist.uri))
         } else {
             val uri = Uri.parse(playlist.uri)
             if (uri.scheme == "file" && uri.path != null) {

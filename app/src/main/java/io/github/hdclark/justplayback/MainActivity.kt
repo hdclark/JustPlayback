@@ -330,9 +330,11 @@ class MainActivity : AppCompatActivity() {
     private fun removeFileFromCurrentList(file: MusicFile) {
         val playlist = activePlaylist
         if (playlist != null) {
-            val updated = activePlaylistFiles.filterNot { it.uri == file.uri }
-            if (PlaylistStorage.savePlaylist(this, playlist.name, updated) != null) {
-                refreshFromMediaStore()
+            writePlaylistWithPermissionRetry {
+                val updated = activePlaylistFiles.filterNot { it.uri == file.uri }
+                if (PlaylistStorage.savePlaylist(this, playlist.name, updated) != null) {
+                    refreshFromMediaStore()
+                }
             }
         } else {
             defaultFiles = defaultFiles.filterNot { it.uri == file.uri }
