@@ -1,7 +1,9 @@
 package io.github.hdclark.justplayback
 
 import android.Manifest
+import android.app.Activity
 import android.app.AlertDialog
+import android.app.RecoverableSecurityException
 import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
@@ -19,6 +21,7 @@ import android.view.MenuItem
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -32,6 +35,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.AppBarLayout
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -88,6 +92,19 @@ class MainActivity : AppCompatActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* Result is informational; service will handle gracefully without it */ }
+
+    private val writeAccessLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val pendingFile = pendingAddToPlaylist
+        if (result.resultCode == Activity.RESULT_OK && pendingFile != null) {
+            pendingAddToPlaylist = null
+            addToPublicPlaylist(pendingFile)
+        } else {
+            pendingAddToPlaylist = null
+            Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -375,15 +392,74 @@ class MainActivity : AppCompatActivity() {
             permissionLauncher.launch(storagePermissions())
             return
         }
-        val line = "${file.uri}\n"
         val playlistUri = findOrCreatePublicPlaylist() ?: return
-        if (playlistUri.scheme == "file") {
-            File(requireNotNull(playlistUri.path)).appendText(line)
-        } else {
-            contentResolver.openOutputStream(playlistUri, "wa")?.bufferedWriter()?.use { it.append(line) }
-        }
+        if (!appendToPlaylist(playlistUri, file)) return
         Toast.makeText(this, R.string.added_to_playlist, Toast.LENGTH_SHORT).show()
         refreshFromMediaStore()
+    }
+
+    private fun appendToPlaylist(playlistUri: Uri, file: MusicFile): Boolean {
+        return try {
+            val line = "${file.uri}\n"
+            if (playlistUri.scheme == "file") {
+                appendLineToFilePlaylist(File(requireNotNull(playlistUri.path)), line)
+            } else {
+                val separator = playlistNeedsSeparator(playlistUri)
+                contentResolver.openOutputStream(playlistUri, "wa")?.bufferedWriter()?.use { writer ->
+                    if (separator) writer.append('\n')
+                    writer.append(line)
+                } ?: return false
+            }
+            true
+        } catch (exception: SecurityException) {
+            requestPlaylistWriteAccess(playlistUri, file, exception)
+            false
+        } catch (_: IOException) {
+            Toast.makeText(this, R.string.playlist_empty, Toast.LENGTH_LONG).show()
+            false
+        }
+    }
+
+    private fun appendLineToFilePlaylist(playlistFile: File, line: String) {
+        playlistFile.parentFile?.mkdirs()
+        val separator = playlistFile.exists() && playlistFile.length() > 0L &&
+            playlistFile.inputStream().use { it.lastByteOrNull() != '\n'.code }
+        playlistFile.appendText(if (separator) "\n$line" else line)
+    }
+
+    private fun playlistNeedsSeparator(playlistUri: Uri): Boolean {
+        return contentResolver.openInputStream(playlistUri)?.use { input ->
+            input.lastByteOrNull()?.let { it != '\n'.code } ?: false
+        } ?: false
+    }
+
+    private fun InputStream.lastByteOrNull(): Int? {
+        var last = -1
+        while (true) {
+            val next = read()
+            if (next == -1) break
+            last = next
+        }
+        return last.takeIf { it != -1 }
+    }
+
+    private fun requestPlaylistWriteAccess(playlistUri: Uri, file: MusicFile, exception: SecurityException) {
+        pendingAddToPlaylist = file
+        val intentSender = if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q &&
+            exception is RecoverableSecurityException
+        ) {
+            exception.userAction.actionIntent.intentSender
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            MediaStore.createWriteRequest(contentResolver, listOf(playlistUri)).intentSender
+        } else {
+            null
+        }
+        if (intentSender != null) {
+            writeAccessLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+        } else {
+            Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
+            pendingAddToPlaylist = null
+        }
     }
 
     private fun findOrCreatePublicPlaylist(): Uri? {
