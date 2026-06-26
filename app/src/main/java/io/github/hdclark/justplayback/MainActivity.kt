@@ -34,6 +34,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.AppBarLayout
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.Locale
@@ -46,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         const val ACTION_AUTO_PLAY = "io.github.hdclark.justplayback.AUTO_PLAY"
         private const val PLAYLIST_NAME = "JustPlayback.m3u"
         private const val M3U_MIME_TYPE = "audio/x-mpegurl"
+        private val PLAYLIST_EXTENSIONS = setOf("m3u", "m3u8")
     }
 
     private lateinit var recyclerView: RecyclerView
@@ -314,7 +316,7 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             return Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
                 .walkTopDown()
-                .filter { it.isFile && it.name.endsWith(".m3u", ignoreCase = true) }
+                .filter { it.isFile && isPlaylistName(it.name) }
                 .map { file ->
                     MusicFile(file.absolutePath.hashCode().toLong(), file.name, Uri.fromFile(file).toString(), file.length(), file.lastModified() / 1000, file.absolutePath)
                 }
@@ -329,8 +331,8 @@ class MainActivity : AppCompatActivity() {
             MediaStore.Files.FileColumns.DATE_MODIFIED,
             MediaStore.Files.FileColumns.RELATIVE_PATH,
         )
-        val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ? AND ${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?"
-        val selectionArgs = arrayOf("%.m3u", "${Environment.DIRECTORY_MUSIC}/%")
+        val selection = "${MediaStore.Files.FileColumns.RELATIVE_PATH} = ? OR ${MediaStore.Files.FileColumns.RELATIVE_PATH} LIKE ?"
+        val selectionArgs = arrayOf(Environment.DIRECTORY_MUSIC, "${Environment.DIRECTORY_MUSIC}/%")
         val files = mutableListOf<MusicFile>()
         contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns._ID)
@@ -340,7 +342,7 @@ class MainActivity : AppCompatActivity() {
             val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameCol)?.trim().orEmpty()
-                if (name.isEmpty() || !name.endsWith(".m3u", ignoreCase = true)) continue
+                if (name.isEmpty() || !isPlaylistName(name)) continue
                 val id = cursor.getLong(idCol)
                 files.add(
                     MusicFile(
@@ -404,20 +406,27 @@ class MainActivity : AppCompatActivity() {
             if (playlistUri.scheme == "file") {
                 appendLineToFilePlaylist(File(requireNotNull(playlistUri.path)), line)
             } else {
-                val separator = playlistNeedsSeparator(playlistUri)
-                contentResolver.openOutputStream(playlistUri, "wa")?.bufferedWriter()?.use { writer ->
-                    if (separator) writer.append('\n')
-                    writer.append(line)
-                } ?: return false
+                appendLineToContentPlaylist(playlistUri, line)
             }
             true
         } catch (exception: SecurityException) {
             requestPlaylistWriteAccess(playlistUri, file, exception)
             false
         } catch (_: IOException) {
-            Toast.makeText(this, R.string.playlist_empty, Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.playlist_write_failed, Toast.LENGTH_LONG).show()
             false
         }
+    }
+
+    private fun appendLineToContentPlaylist(playlistUri: Uri, line: String) {
+        contentResolver.openFileDescriptor(playlistUri, "rw")?.use { descriptor ->
+            FileOutputStream(descriptor.fileDescriptor).channel.use { channel ->
+                val playlistSize = channel.size()
+                val separator = playlistSize > 0L && playlistNeedsSeparator(playlistUri)
+                channel.position(playlistSize)
+                channel.write(java.nio.ByteBuffer.wrap((if (separator) "\n$line" else line).toByteArray()))
+            }
+        } ?: throw IOException("Unable to open playlist for writing")
     }
 
     private fun playlistEntryFor(file: MusicFile, playlistUri: Uri): String {
@@ -510,6 +519,9 @@ class MainActivity : AppCompatActivity() {
         }
         return contentResolver.insert(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
     }
+
+    private fun isPlaylistName(name: String): Boolean =
+        PLAYLIST_EXTENSIONS.any { extension -> name.endsWith(".$extension", ignoreCase = true) }
 
     private fun isAppPlaylist(file: MusicFile): Boolean {
         if (file.name != PLAYLIST_NAME) return false

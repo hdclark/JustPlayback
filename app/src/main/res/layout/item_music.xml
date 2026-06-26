@@ -10,12 +10,9 @@
         android:id="@+id/tv_name"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:ellipsize="marquee"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:marqueeRepeatLimit="-1"
-        android:scrollHorizontally="true"
-        android:singleLine="true"
+        android:ellipsize="none"
+        android:scrollHorizontally="false"
+        android:singleLine="false"
         android:textStyle="bold"
         android:textSize="15sp" />
 
@@ -24,12 +21,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
-        android:ellipsize="marquee"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:marqueeRepeatLimit="-1"
-        android:scrollHorizontally="true"
-        android:singleLine="true"
+        android:ellipsize="none"
+        android:scrollHorizontally="false"
+        android:singleLine="false"
         android:textSize="12sp"
         android:alpha="0.7" />
 

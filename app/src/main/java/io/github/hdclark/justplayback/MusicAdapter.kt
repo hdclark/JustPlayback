@@ -24,10 +24,6 @@ class MusicAdapter(
         val name: TextView = view.findViewById(R.id.tv_name)
         val meta: TextView = view.findViewById(R.id.tv_meta)
 
-        init {
-            name.isSelected = true
-            meta.isSelected = true
-        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {

@@ -12,5 +12,6 @@
     <string name="add_to_playlist">Add to playlist</string>
     <string name="added_to_playlist">Added to playlist</string>
     <string name="playlist_empty">Playlist has no matching files.</string>
+    <string name="playlist_write_failed">Unable to update playlist.</string>
     <string name="shortcut_auto_play">Auto play</string>
 </resources>
