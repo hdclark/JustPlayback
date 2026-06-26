@@ -31,6 +31,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.appbar.AppBarLayout
 import java.io.File
+import java.io.IOException
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -40,6 +41,7 @@ class MainActivity : AppCompatActivity() {
         private const val LIST_BOTTOM_PADDING_DP = 8
         const val ACTION_AUTO_PLAY = "io.github.hdclark.justplayback.AUTO_PLAY"
         private const val PLAYLIST_NAME = "JustPlayback.m3u"
+        private const val M3U_MIME_TYPE = "audio/x-mpegurl"
     }
 
     private lateinit var recyclerView: RecyclerView
@@ -54,6 +56,8 @@ class MainActivity : AppCompatActivity() {
     private var searchQuery = ""
     private var displayedPlaylist: List<MusicFile>? = null
     private var pendingAutoPlay = false
+    private var serviceBindRequested = false
+    private var pendingAddToPlaylist: MusicFile? = null
 
     private val backCallback = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
@@ -88,13 +92,19 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        val storagePermission = storagePermission()
-        val storageGranted = permissions[storagePermission] ?: (
-            ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED
-        )
+        val storageGranted = storagePermissions().all { permission ->
+            permissions[permission] ?: (
+                ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+            )
+        }
         if (storageGranted) {
             refreshFromMediaStore()
+            pendingAddToPlaylist?.let { file ->
+                pendingAddToPlaylist = null
+                addToPublicPlaylist(file)
+            }
         } else {
+            pendingAddToPlaylist = null
             Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
             swipeRefresh.isRefreshing = false
         }
@@ -145,9 +155,6 @@ class MainActivity : AppCompatActivity() {
         swipeRefresh.setOnRefreshListener { checkPermissionsAndRefresh() }
 
         loadAndDisplayFromPrefs()
-        if (pendingAutoPlay) {
-            autoPlayRandomWhenReady()
-        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -159,14 +166,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val intent = Intent(this, MusicService::class.java)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        bindMusicService()
+        if (pendingAutoPlay) {
+            autoPlayRandomWhenReady()
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        if (bound) {
+        if (serviceBindRequested) {
             unbindService(serviceConnection)
+            serviceBindRequested = false
             bound = false
         }
     }
@@ -219,12 +229,22 @@ class MainActivity : AppCompatActivity() {
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
+    private fun storagePermissions(): Array<String> {
+        val permissions = mutableListOf(storagePermission())
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+        return permissions.toTypedArray()
+    }
+
     private fun checkPermissionsAndRefresh() {
-        val storagePermission = storagePermission()
-        if (ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED) {
+        val missingPermissions = storagePermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPermissions.isEmpty()) {
             refreshFromMediaStore()
         } else {
-            permissionLauncher.launch(arrayOf(storagePermission))
+            permissionLauncher.launch(missingPermissions.toTypedArray())
         }
     }
 
@@ -243,6 +263,7 @@ class MainActivity : AppCompatActivity() {
             MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.SIZE,
             MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.DATA,
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} = ? AND ${MediaStore.Audio.Media.MIME_TYPE} LIKE ?"
         val selectionArgs = arrayOf("1", "audio/%")
@@ -252,11 +273,21 @@ class MainActivity : AppCompatActivity() {
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
             val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.SIZE)
             val modCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
+            val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameCol)?.trim().orEmpty()
                 if (name.isEmpty()) continue
                 val id = cursor.getLong(idCol)
-                files.add(MusicFile(id, name, android.content.ContentUris.withAppendedId(uri, id).toString(), cursor.getLong(sizeCol), cursor.getLong(modCol)))
+                files.add(
+                    MusicFile(
+                        id,
+                        name,
+                        android.content.ContentUris.withAppendedId(uri, id).toString(),
+                        cursor.getLong(sizeCol),
+                        cursor.getLong(modCol),
+                        cursor.getString(pathCol)
+                    )
+                )
             }
         }
         return files
@@ -268,7 +299,7 @@ class MainActivity : AppCompatActivity() {
                 .walkTopDown()
                 .filter { it.isFile && it.name.endsWith(".m3u", ignoreCase = true) }
                 .map { file ->
-                    MusicFile(file.absolutePath.hashCode().toLong(), file.name, Uri.fromFile(file).toString(), file.length(), file.lastModified() / 1000)
+                    MusicFile(file.absolutePath.hashCode().toLong(), file.name, Uri.fromFile(file).toString(), file.length(), file.lastModified() / 1000, file.absolutePath)
                 }
                 .toList()
         }
@@ -289,11 +320,21 @@ class MainActivity : AppCompatActivity() {
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
             val modCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val pathCol = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.RELATIVE_PATH)
             while (cursor.moveToNext()) {
                 val name = cursor.getString(nameCol)?.trim().orEmpty()
                 if (name.isEmpty() || !name.endsWith(".m3u", ignoreCase = true)) continue
                 val id = cursor.getLong(idCol)
-                files.add(MusicFile(id, name, android.content.ContentUris.withAppendedId(uri, id).toString(), cursor.getLong(sizeCol), cursor.getLong(modCol)))
+                files.add(
+                    MusicFile(
+                        id,
+                        name,
+                        android.content.ContentUris.withAppendedId(uri, id).toString(),
+                        cursor.getLong(sizeCol),
+                        cursor.getLong(modCol),
+                        cursor.getString(pathCol).orEmpty() + name
+                    )
+                )
             }
         }
         return files
@@ -321,10 +362,19 @@ class MainActivity : AppCompatActivity() {
     private fun removeFromList(file: MusicFile) {
         val updated = Prefs.loadFiles(this).filterNot { it.uri == file.uri }
         Prefs.saveFiles(this, updated)
-        updateDisplayedFiles(updated)
+        displayedPlaylist = displayedPlaylist?.filterNot { it.uri == file.uri }
+        updateDisplayedFiles(displayedPlaylist ?: updated)
     }
 
     private fun addToPublicPlaylist(file: MusicFile) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingAddToPlaylist = file
+            permissionLauncher.launch(storagePermissions())
+            return
+        }
         val line = "${file.uri}\n"
         val playlistUri = findOrCreatePublicPlaylist() ?: return
         if (playlistUri.scheme == "file") {
@@ -337,7 +387,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun findOrCreatePublicPlaylist(): Uri? {
-        queryMusicDirectoryPlaylists().firstOrNull { it.name == PLAYLIST_NAME }?.let { return Uri.parse(it.uri) }
+        queryMusicDirectoryPlaylists().firstOrNull { isAppPlaylist(it) }?.let { return Uri.parse(it.uri) }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val musicDirectory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
             musicDirectory.mkdirs()
@@ -346,24 +396,45 @@ class MainActivity : AppCompatActivity() {
 
         val values = ContentValues().apply {
             put(MediaStore.Files.FileColumns.DISPLAY_NAME, PLAYLIST_NAME)
-            put(MediaStore.Files.FileColumns.MIME_TYPE, "audio/x-mpegurl")
+            put(MediaStore.Files.FileColumns.MIME_TYPE, M3U_MIME_TYPE)
             put(MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_MUSIC)
         }
-        return contentResolver.insert(MediaStore.Files.getContentUri("external"), values)
+        return contentResolver.insert(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values)
+    }
+
+    private fun isAppPlaylist(file: MusicFile): Boolean {
+        if (file.name != PLAYLIST_NAME) return false
+        val path = file.path ?: return false
+        val expectedRelativePath = "${Environment.DIRECTORY_MUSIC}/$PLAYLIST_NAME"
+        return path == expectedRelativePath || File(path).let { it.name == PLAYLIST_NAME && it.parentFile?.name == Environment.DIRECTORY_MUSIC }
     }
 
     private fun loadPlaylistFiles(playlist: MusicFile): List<MusicFile> {
         val knownFiles = Prefs.loadFiles(this).filterNot { it.isPlaylist }
         val byUri = knownFiles.associateBy { it.uri }
-        val byName = knownFiles.associateBy { it.name.lowercase(Locale.ROOT) }
-        return contentResolver.openInputStream(Uri.parse(playlist.uri))?.bufferedReader()?.useLines { lines ->
-            lines.map { it.trim() }
-                .filter { it.isNotEmpty() && !it.startsWith("#") }
-                .mapNotNull { entry ->
-                    byUri[entry] ?: byName[File(entry).name.lowercase(Locale.ROOT)]
-                }
-                .toList()
-        }.orEmpty()
+        val byPath = knownFiles.mapNotNull { file -> file.path?.let { normalizePath(it) to file } }.toMap()
+        val normalizedPaths = byPath.keys.toList()
+        val byUniqueName = knownFiles.groupBy { it.name.lowercase(Locale.ROOT) }
+            .filterValues { it.size == 1 }
+            .mapValues { it.value.first() }
+        return try {
+            contentResolver.openInputStream(Uri.parse(playlist.uri))?.bufferedReader()?.useLines { lines ->
+                lines.map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("#") }
+                    .mapNotNull { entry ->
+                        val normalizedEntry = normalizePlaylistEntry(entry, playlist.path)
+                        byUri[entry]
+                            ?: byPath[normalizedEntry]
+                            ?: matchByPathSuffix(normalizedEntry, normalizedPaths, byPath)
+                            ?: byUniqueName[File(entry).name.lowercase(Locale.ROOT)]
+                    }
+                    .toList()
+            }.orEmpty()
+        } catch (_: IOException) {
+            emptyList()
+        } catch (_: SecurityException) {
+            emptyList()
+        }
     }
 
     private fun playFile(file: MusicFile, allFiles: List<MusicFile>) {
@@ -390,8 +461,33 @@ class MainActivity : AppCompatActivity() {
     private fun ensureServiceStarted() {
         val intent = Intent(this, MusicService::class.java)
         startForegroundService(intent)
-        if (!bound) {
-            bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
-        }
+        bindMusicService()
     }
+
+    private fun bindMusicService() {
+        if (serviceBindRequested) return
+        val intent = Intent(this, MusicService::class.java)
+        serviceBindRequested = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
+    private fun matchByPathSuffix(
+        normalizedEntry: String,
+        normalizedPaths: List<String>,
+        byPath: Map<String, MusicFile>
+    ): MusicFile? {
+        val matches = normalizedPaths.filter { it.endsWith("/$normalizedEntry") }
+        return matches.singleOrNull()?.let { byPath[it] }
+    }
+
+    private fun normalizePlaylistEntry(entry: String, playlistPath: String?): String {
+        val entryFile = File(entry)
+        val path = if (entryFile.isAbsolute) {
+            entryFile.path
+        } else {
+            playlistPath?.let { File(it).parentFile?.resolve(entry)?.path } ?: entry
+        }
+        return normalizePath(path)
+    }
+
+    private fun normalizePath(path: String): String = File(path).normalize().path
 }
