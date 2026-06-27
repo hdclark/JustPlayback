@@ -26,7 +26,6 @@ object Prefs {
             obj.put("uri", f.uri)
             obj.put("size", f.size)
             obj.put("lastModified", f.lastModified)
-            obj.put("path", f.path)
             array.put(obj)
         }
         prefs(context).edit().putString(KEY_FILES, array.toString()).apply()
@@ -45,8 +44,7 @@ object Prefs {
                         name = obj.getString("name"),
                         uri = obj.getString("uri"),
                         size = obj.getLong("size"),
-                        lastModified = obj.getLong("lastModified"),
-                        path = obj.optString("path").takeIf { it.isNotBlank() && it != "null" }
+                        lastModified = obj.getLong("lastModified")
                     )
                 )
             }

@@ -7,11 +7,4 @@
     <string name="permission_denied">Storage permission is required to read music files.</string>
     <string name="no_music">No music files found. Pull down to refresh.</string>
     <string name="refreshing">Refreshing…</string>
-    <string name="search_hint">Search files</string>
-    <string name="remove_from_list">Remove from list</string>
-    <string name="add_to_playlist">Add to playlist</string>
-    <string name="added_to_playlist">Added to playlist</string>
-    <string name="playlist_empty">Playlist has no matching files.</string>
-    <string name="playlist_write_failed">Unable to update playlist.</string>
-    <string name="shortcut_auto_play">Auto play</string>
 </resources>

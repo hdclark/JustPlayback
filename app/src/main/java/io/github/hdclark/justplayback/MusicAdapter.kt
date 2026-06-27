@@ -14,8 +14,7 @@ import java.util.Locale
 
 class MusicAdapter(
     private var files: List<MusicFile>,
-    private val onClick: (MusicFile) -> Unit,
-    private val onLongClick: (MusicFile) -> Unit
+    private val onClick: (MusicFile) -> Unit
 ) : RecyclerView.Adapter<MusicAdapter.ViewHolder>() {
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
@@ -24,6 +23,10 @@ class MusicAdapter(
         val name: TextView = view.findViewById(R.id.tv_name)
         val meta: TextView = view.findViewById(R.id.tv_meta)
 
+        init {
+            name.isSelected = true
+            meta.isSelected = true
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -41,10 +44,6 @@ class MusicAdapter(
             .format(dateFormatter)
         holder.meta.text = "$sizeStr • $dateStr"
         holder.itemView.setOnClickListener { onClick(file) }
-        holder.itemView.setOnLongClickListener {
-            onLongClick(file)
-            true
-        }
     }
 
     override fun getItemCount(): Int = files.size
