@@ -130,7 +130,7 @@ class MusicService : Service(), AudioManager.OnAudioFocusChangeListener {
         files = allFiles
         current = file
         history.clear()
-        remaining = allFiles.filter { it.id != file.id }.toMutableList().also { it.shuffle() }
+        remaining = allFiles.filter { it.id != file.id }.toMutableList().also { it.shuffle(java.util.Random()) }
         startPlayback(file)
     }
 

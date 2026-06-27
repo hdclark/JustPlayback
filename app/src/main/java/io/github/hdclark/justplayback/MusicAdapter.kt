@@ -14,7 +14,8 @@ import java.util.Locale
 
 class MusicAdapter(
     private var files: List<MusicFile>,
-    private val onClick: (MusicFile) -> Unit
+    private val onClick: (MusicFile) -> Unit,
+    private val onLongClick: (MusicFile) -> Unit
 ) : RecyclerView.Adapter<MusicAdapter.ViewHolder>() {
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.ROOT)
@@ -24,7 +25,6 @@ class MusicAdapter(
         val meta: TextView = view.findViewById(R.id.tv_meta)
 
         init {
-            name.isSelected = true
             meta.isSelected = true
         }
     }
@@ -39,11 +39,20 @@ class MusicAdapter(
         val file = files[position]
         holder.name.text = file.name
         val sizeStr = formatSize(file.size)
-        val dateStr = Instant.ofEpochSecond(file.lastModified)
-            .atZone(ZoneId.systemDefault())
-            .format(dateFormatter)
-        holder.meta.text = "$sizeStr • $dateStr"
+        val dateStr = if (file.lastModified > 0L) {
+            Instant.ofEpochSecond(file.lastModified)
+                .atZone(ZoneId.systemDefault())
+                .format(dateFormatter)
+        } else {
+            ""
+        }
+        holder.meta.text = if (file.isM3u) {
+            holder.itemView.context.getString(R.string.meta_playlist)
+        } else {
+            "$sizeStr • $dateStr"
+        }
         holder.itemView.setOnClickListener { onClick(file) }
+        holder.itemView.setOnLongClickListener { onLongClick(file); true }
     }
 
     override fun getItemCount(): Int = files.size
