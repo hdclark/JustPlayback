@@ -9,4 +9,10 @@
         <item name="colorOnSecondary">@color/black</item>
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
     </style>
+
+    <style name="ThemeOverlay.JustPlayback.PopupMenu" parent="ThemeOverlay.MaterialComponents.Dark">
+        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textColorPrimary">@android:color/white</item>
+        <item name="android:textColorSecondary">#CCFFFFFF</item>
+    </style>
 </resources>

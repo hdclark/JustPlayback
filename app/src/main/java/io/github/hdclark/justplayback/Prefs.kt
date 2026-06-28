@@ -25,6 +25,7 @@ object Prefs {
             obj.put("id", f.id)
             obj.put("name", f.name)
             obj.put("uri", f.uri)
+            obj.put("path", f.path)
             obj.put("size", f.size)
             obj.put("lastModified", f.lastModified)
             obj.put("isM3u", f.isM3u)
@@ -45,6 +46,7 @@ object Prefs {
                         id = obj.getLong("id"),
                         name = obj.getString("name"),
                         uri = obj.getString("uri"),
+                        path = obj.optString("path").ifEmpty { null },
                         size = obj.getLong("size"),
                         lastModified = obj.getLong("lastModified"),
                         isM3u = obj.optBoolean("isM3u", false)
