@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.EditText
@@ -33,6 +34,7 @@ import com.google.android.material.appbar.AppBarLayout
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.io.RandomAccessFile
 import java.util.Locale
 import java.util.Random
 import java.util.concurrent.atomic.AtomicInteger
@@ -90,11 +92,20 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val storagePermission = storagePermission()
-        val storageGranted = permissions[storagePermission] ?: (
-            ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED
-        )
+        val storageGranted = permissions[storagePermission] ?: hasMediaReadPermission()
         if (storageGranted) {
             refreshFromMediaStore()
+        } else {
+            Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
+            swipeRefresh.isRefreshing = false
+        }
+    }
+
+    private val manageStoragePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (hasManageExternalStoragePermission()) {
+            checkPermissionsAndRefresh()
         } else {
             Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_LONG).show()
             swipeRefresh.isRefreshing = false
@@ -152,9 +163,9 @@ class MainActivity : AppCompatActivity() {
         migratePrivatePlaylists()
         loadAndDisplayFromPrefs()
 
-        if (shouldPlayShuffleAll && libraryAudioFiles.isEmpty() && hasStoragePermission()) {
+        if (shouldPlayShuffleAll && libraryAudioFiles.isEmpty()) {
             swipeRefresh.isRefreshing = true
-            refreshFromMediaStore()
+            checkPermissionsAndRefresh()
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -170,9 +181,9 @@ class MainActivity : AppCompatActivity() {
         if (intent.action == ACTION_PLAY_SHUFFLE_ALL) {
             shouldPlayShuffleAll = true
             maybePlayShuffleAll()
-            if (libraryAudioFiles.isEmpty() && hasStoragePermission()) {
+            if (libraryAudioFiles.isEmpty()) {
                 swipeRefresh.isRefreshing = true
-                refreshFromMediaStore()
+                checkPermissionsAndRefresh()
             }
         }
     }
@@ -262,8 +273,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissionsAndRefresh() {
+        if (!hasManageExternalStoragePermission()) {
+            requestManageExternalStoragePermission()
+            return
+        }
+
         val storagePermission = storagePermission()
-        if (ContextCompat.checkSelfPermission(this, storagePermission) == PackageManager.PERMISSION_GRANTED) {
+        if (hasMediaReadPermission()) {
             refreshFromMediaStore()
         } else {
             permissionLauncher.launch(arrayOf(storagePermission))
@@ -431,6 +447,10 @@ class MainActivity : AppCompatActivity() {
         excluded.add(file.uri)
         Prefs.saveExcluded(this, excluded)
         loadAndDisplayFromPrefs()
+        playlistViewFiles = playlistViewFiles?.filter { it.uri != file.uri }
+        if (playlistViewFiles != null) {
+            renderCurrentList()
+        }
         Toast.makeText(this, R.string.removed_from_list, Toast.LENGTH_SHORT).show()
     }
 
@@ -485,7 +505,8 @@ class MainActivity : AppCompatActivity() {
             if (!playlist.exists()) {
                 playlist.writeText("#EXTM3U\n$entry")
             } else {
-                playlist.appendText(entry)
+                val separator = if (playlist.length() > 0L && !endsWithLineBreak(playlist)) "\n" else ""
+                playlist.appendText("$separator$entry")
             }
             MediaScannerConnection.scanFile(this, arrayOf(playlist.absolutePath), null, null)
             loadAndDisplayFromPrefs()
@@ -496,6 +517,13 @@ class MainActivity : AppCompatActivity() {
             ).show()
         } catch (_: Exception) {
             Toast.makeText(this, R.string.error_playlist, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun endsWithLineBreak(file: File): Boolean {
+        return RandomAccessFile(file, "r").use { playlist ->
+            playlist.seek(playlist.length() - 1L)
+            playlist.readByte().toInt().toChar() == '\n'
         }
     }
 
@@ -529,6 +557,7 @@ class MainActivity : AppCompatActivity() {
         val allFiles = libraryAudioFiles.shuffled(Random())
         if (allFiles.isEmpty()) return
         shouldPlayShuffleAll = false
+        ensureServiceStarted()
         musicService?.play(allFiles.first(), allFiles)
     }
 
@@ -613,8 +642,21 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun hasStoragePermission(): Boolean {
+    private fun hasMediaReadPermission(): Boolean {
         return ContextCompat.checkSelfPermission(this, storagePermission()) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasManageExternalStoragePermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+    }
+
+    private fun requestManageExternalStoragePermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+        manageStoragePermissionLauncher.launch(intent)
     }
 
     private fun storagePermission(): String {
